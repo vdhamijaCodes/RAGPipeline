@@ -6,6 +6,8 @@ import argparse
 # import os
 import sys
 
+THRESHOLD = 0.30
+
 load_dotenv()
 client = OpenAI()
 
@@ -47,6 +49,24 @@ def embed(text):
 
     return embedding_vector
 
+def answer_question(question, chunks):
+    response = client.chat.completions.create(
+        model = "gpt-4o-mini",
+        messages = [
+            {
+                "role" : "system",
+                "content" : "You are a question-answering assistant operating within a Retrieval-Augmented Generation (RAG) system. Your task is to answer the user's question using ONLY the information explicitly available in the provided context. Do not invent answer, if the answer to the question is not available in the data chunk then say clearly that the document doesn't contain the answer"
+            },
+            {
+                "role" : "user",
+                "content" : f"Here is the chunk of the data  : {chunks} \n this must be used to answer the following question : {question}"
+            } 
+        ],
+        temperature = 0.3,
+        max_tokens = 300
+    )
+    return response.choices[0].message.content 
+
 def cosine_similarity(a,b):
     a = np.array(a)
     b = np.array(b)
@@ -70,8 +90,13 @@ if __name__ == "__main__":
         i+=1
 
     score = sorted(score, key=lambda x:x[0], reverse=True)
-    for s, chunk in score[:3]:
-        print(f"{s:.3f} {chunk}")
+
+    if score[0][0] >= THRESHOLD:
+        # print(score[:3])
+        print(answer_question(args.question, "\n\n".join([item[1] for item in score[:3]])))
+    else:
+        print("Sorry, I could not find anything related to the question you have asked")
+
 
 
 
