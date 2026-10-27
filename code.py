@@ -1,6 +1,7 @@
 
 from openai import OpenAI
 from dotenv import load_dotenv
+import numpy as np
 import os
 
 load_dotenv()
@@ -34,13 +35,21 @@ def embed(text):
 
     return embedding_vector
 
+def cosine_similarity(a,b):
+    a = np.array(a)
+    b = np.array(b)
+    return (np.dot(a,b))/(np.linalg.norm(a) * np.linalg.norm(b))
+
 if __name__ == "__main__":
     text = "one two three four five six seven"
     result = chunk_text(text, 4)
     vector = embed(result)
     print(result)
     print(len(vector))
-    print(len(vector[0]))
+    print(len(vector[0]))   
+    a = [1,0]
+    b = [2,0]
+    print(cosine_similarity(a,b))
 
 
 
