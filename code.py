@@ -23,8 +23,6 @@ def read_file(filename):
         print(f"{filename} not found in the current directory, please check the location")
         sys.exit(1)
     
-
-
 def chunk_text(text, size):
     lis = []
     words = text.split()
@@ -75,15 +73,12 @@ def cosine_similarity(a,b):
     b = np.array(b)
     return (np.dot(a,b))/(np.linalg.norm(a) * np.linalg.norm(b))
 
-def save_index(chunks, vectors, path):
+def save_index(chunks, vectors, path, contentHash):
     data = dict()
-    i = 0
-    bytes = "".join(chunks).encode("utf-8")
-    list_hash = hashlib.sha256(bytes).hexdigest()
-    data["hasCode"] = list_hash
-    for chunk in chunks:
-        data[chunk] = vectors[i]
-        i+=1
+    data["hashCode"] = contentHash
+    data["Chunks"] = chunks
+    data["vectors"] = vectors
+
     with open(path,"w") as file:
         json.dump(data, file)
 
@@ -91,8 +86,9 @@ def save_index(chunks, vectors, path):
 def load_index(path):
     data = dict()
     with open(path, "r") as file:
-        data = json.load(file)    
-    return list(data.keys()), list(data.values())
+        data = json.load(file)
+       
+    return data["Chunks"], data["vectors"], data["hashCode"]
 
 
 if __name__ == "__main__":
@@ -101,13 +97,20 @@ if __name__ == "__main__":
     parser.add_argument("question", help= "Enter the question you would like the system to answer")
     args = parser.parse_args()
     content = read_file(args.filename)
+    contentHash = hashlib.sha256(content.encode()).hexdigest()
     result_file = chunk_text(content, 40)
     file_path = f"{os.path.basename(args.filename)}_indexes.json"
     if os.path.exists(file_path):
-        result_file, vector_file = load_index(file_path)
+        saved_chunks, saved_vectors, hashCode = load_index(file_path)
+        if hashCode != contentHash:
+            vector_file = embed(result_file)
+            save_index(result_file, vector_file,file_path, contentHash)
+        else:
+            result_file = saved_chunks
+            vector_file = saved_vectors
     else:
         vector_file = embed(result_file)
-        save_index(result_file, vector_file,file_path)
+        save_index(result_file, vector_file,file_path, contentHash) 
 
     result_question = chunk_text(args.question, len(args.question))
     vector_question = embed(result_question)
