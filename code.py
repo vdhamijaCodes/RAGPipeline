@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import hashlib
+from PyPDF2 import PdfReader
 
 # Minimum similarity for the best chunk. Below this, the question is treated
 # as unrelated to the document. 0.30 came from testing on-topic questions
@@ -41,6 +42,26 @@ def read_file(filename):
     except FileNotFoundError:
         print(f"{filename} not found in the current directory, please check the location")
         sys.exit(1)
+
+
+def read_pdf(filepath):
+    try:
+        with open(filepath, "rb") as file:
+            reader = PdfReader(file)
+            page_content = []
+            for i in range(len(reader.pages)):
+                page_content.append(reader.pages[i].extract_text())  
+                
+            content =  "\n".join(page_content)
+            if len(content.strip()) == 0:
+                sys.exit(1)
+            else:
+                return content
+
+    except FileNotFoundError:
+        print(f"{filepath} not found in the current directory, please check the location")
+        sys.exit(1)
+
 
 
 def chunk_text(text, size):
@@ -199,3 +220,8 @@ if __name__ == "__main__":
         print(answer_question(args.question, "\n\n".join([item[1] for item in score[:3]])))
     else:
         print("Sorry, I could not find anything related to the question you have asked")
+
+
+    print("Calling PDF reader")
+    pdf_content  = read_pdf("/home/varun/Desktop/RAG/Introduction to Linear Algebra Fifth Edition by Gilbert Strang.pdf")
+    print(pdf_content[:])
