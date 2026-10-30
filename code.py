@@ -173,6 +173,7 @@ if __name__ == "__main__":
     # --- 2. Read the document and fingerprint it ---
     # The hash changes if even one character of the file changes. We use it to
     # detect that a saved index is stale (built from an older version of the file).
+    print(os.path.splitext(args.filename))
     if os.path.splitext(args.filename)[1].lower() == ".txt":
         content = read_file(args.filename)
     else:
@@ -184,7 +185,7 @@ if __name__ == "__main__":
 
     print(f"context.split length {len(content.split())}")
     print(f"Result file length {len(result_file)}")
-    
+
     # One cache file per document, e.g. "Ocean.txt_indexes.json" (created in the folder you run from).
     file_path = f"{os.path.basename(args.filename)}_indexes.json"
 
