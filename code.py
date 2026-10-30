@@ -22,7 +22,7 @@ import json
 import os
 import sys
 import hashlib
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 # Minimum similarity for the best chunk. Below this, the question is treated
 # as unrelated to the document. 0.30 came from testing on-topic questions
@@ -49,14 +49,15 @@ def read_pdf(filepath):
         with open(filepath, "rb") as file:
             reader = PdfReader(file)
             page_content = []
+            
             for i in range(len(reader.pages)):
                 page_content.append(reader.pages[i].extract_text())  
-                
-            content =  "\n".join(page_content)
-            if len(content.strip()) == 0:
+            
+            if len("".join(page_content).strip()) == 0:
+                print("the pdf does not have any extractable text, please upload a new file")
                 sys.exit(1)
             else:
-                return content
+                return "".join(page_content)
 
     except FileNotFoundError:
         print(f"{filepath} not found in the current directory, please check the location")
@@ -172,10 +173,18 @@ if __name__ == "__main__":
     # --- 2. Read the document and fingerprint it ---
     # The hash changes if even one character of the file changes. We use it to
     # detect that a saved index is stale (built from an older version of the file).
-    content = read_file(args.filename)
+    if os.path.splitext(args.filename)[1].lower() == ".txt":
+        content = read_file(args.filename)
+    else:
+        content = read_pdf(args.filename)
+
+
     contentHash = hashlib.sha256(content.encode()).hexdigest()
     result_file = chunk_text(content, 40)  # chunks of the CURRENT file
 
+    print(f"context.split length {len(content.split())}")
+    print(f"Result file length {len(result_file)}")
+    
     # One cache file per document, e.g. "Ocean.txt_indexes.json" (created in the folder you run from).
     file_path = f"{os.path.basename(args.filename)}_indexes.json"
 
@@ -220,8 +229,3 @@ if __name__ == "__main__":
         print(answer_question(args.question, "\n\n".join([item[1] for item in score[:3]])))
     else:
         print("Sorry, I could not find anything related to the question you have asked")
-
-
-    print("Calling PDF reader")
-    pdf_content  = read_pdf("/home/varun/Desktop/RAG/Introduction to Linear Algebra Fifth Edition by Gilbert Strang.pdf")
-    print(pdf_content[:])
