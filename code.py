@@ -23,6 +23,7 @@ import os
 import sys
 import hashlib
 from pypdf import PdfReader
+import time
 
 # Minimum similarity for the best chunk. Below this, the question is treated
 # as unrelated to the document. 0.30 came from testing on-topic questions
@@ -45,6 +46,7 @@ def read_file(filename):
 
 
 def read_pdf(filepath):
+    start_time = time.perf_counter()
     try:
         with open(filepath, "rb") as file:
             reader = PdfReader(file)
@@ -55,12 +57,18 @@ def read_pdf(filepath):
             
             if len("".join(page_content).strip()) == 0:
                 print("the pdf does not have any extractable text, please upload a new file")
+                end_time = time.perf_counter()
+                print(f"total time taken {end_time-start_time:.6f} seconds")
                 sys.exit(1)
             else:
+                end_time = time.perf_counter()
+                print(f"total time taken {end_time-start_time:.6f} seconds")
                 return "".join(page_content)
 
     except FileNotFoundError:
         print(f"{filepath} not found in the current directory, please check the location")
+        end_time = time.perf_counter()
+        print(f"total time taken {end_time-start_time:.6f} seconds")
         sys.exit(1)
 
 
@@ -70,6 +78,7 @@ def chunk_text(text, size):
 
     Example: 7 words with size=4 -> ['w1 w2 w3 w4', 'w5 w6 w7'] (last chunk may be shorter).
     """
+    
     lis = []
     words = text.split()
     j = 0  # start position of the current chunk
@@ -165,6 +174,7 @@ def load_index(path):
 
 if __name__ == "__main__":
     # --- 1. Command-line input: the file to search and the question to ask ---
+    start_time = time.perf_counter()
     parser = argparse.ArgumentParser(description="Calling the parser for declaration")
     parser.add_argument("filename", help="enter the name of the file")
     parser.add_argument("question", help="Enter the question you would like the system to answer")
@@ -181,7 +191,7 @@ if __name__ == "__main__":
 
 
     contentHash = hashlib.sha256(content.encode()).hexdigest()
-    result_file = chunk_text(content, 40)  # chunks of the CURRENT file
+    result_file = chunk_text(content, 200)  # chunks of the CURRENT file
 
     print(f"context.split length {len(content.split())}")
     print(f"Result file length {len(result_file)}")
@@ -204,6 +214,11 @@ if __name__ == "__main__":
         # First run for this document: embed everything and save the cache.
         vector_file = embed(result_file)
         save_index(result_file, vector_file, file_path, contentHash)
+
+
+    # for i in range(len(vector_file)):
+    #     print(f"Embedding text {i+1} : {result_file[i]} , {vector_file[i]}")
+
     # NOTE: the hash covers only the file's text. If you change the chunk size (40)
     # or the embedding model, delete the *_indexes.json files by hand, or the old
     # vectors will be reused wrongly.
@@ -230,3 +245,6 @@ if __name__ == "__main__":
         print(answer_question(args.question, "\n\n".join([item[1] for item in score[:3]])))
     else:
         print("Sorry, I could not find anything related to the question you have asked")
+
+    end_time = time.perf_counter()
+    print(f"total time taken {end_time-start_time:.6f} seconds")
