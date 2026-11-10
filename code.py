@@ -2,7 +2,7 @@
 Mini RAG tool: ask a question about a text file.
 
 How it works (the whole idea in 5 steps):
-  1. Read the file and split it into chunks of ~40 words.
+  1. Read the file and split it into chunks of ~200(CHANGE THE CHUNK SIZE IF NEEDED) words.
   2. Turn each chunk into a vector (embedding) so "meaning" can be compared with math.
      These vectors are cached in a JSON file so we only pay for them once.
   3. Embed the question the same way.
@@ -30,16 +30,23 @@ import time
 # (best scores 0.52+) vs off-topic ones (best scores 0.15 or lower).
 # It is specific to the text-embedding-3-small model; re-measure if you change models.
 THRESHOLD = 0.30
+CHUNK_SIZE = 200 # change this as the size of the file changes, big files would require a higher chunnk size to reduct the time taken, if the chunk size changes then delete any old jSON file else there will be problem
+EMBED_MODEL = "text-embedding-3-small" # change this only when you need more compute for embedding, models are expensive
+EXTRACT_VERSION = "pypdf-v1"  # this is version control, change this when the pay text is pulled changes    
+
 
 load_dotenv()      # Must run BEFORE OpenAI() so the key from .env is available.
 client = OpenAI()  # Reads OPENAI_API_KEY from the environment automatically.
 
+def hashfingerprint(file_hash):
+    fingerprint = hashlib.sha256(f"{file_hash}|{CHUNK_SIZE}|{EMBED_MODEL}|{EXTRACT_VERSION}".encode()).hexdigest()
+    return fingerprint
 
 def hash_file(path):
     try:
         with open(path, "rb") as file:
-            contentHash = hashlib.sha256(file.read()).hexdigest()
-            return contentHash
+            file_hash = hashlib.sha256(file.read()).hexdigest()
+            return file_hash
     except FileNotFoundError:
         print(f"{path} not found in the current directory, please check the location")
         sys.exit(1)
@@ -109,7 +116,7 @@ def embed(text):
     """
     print(f"embedding {len(text)} text(s)")
     response = client.embeddings.create(
-        model = "text-embedding-3-small",
+        model = EMBED_MODEL,
         input = text,
         encoding_format="float"
     )
@@ -194,9 +201,8 @@ if __name__ == "__main__":
     # The hash changes if even one character of the file changes. We use it to
     # detect that a saved index is stale (built from an older version of the file).
     print(os.path.splitext(args.filename))
-    contentHash = hash_file(args.filename)
-
-    # result_file = chunk_text(content, 200)  # chunks of the CURRENT file
+    contentHash = hashfingerprint(hash_file(args.filename))
+    
 
     # print(f"context.split length {len(content.split())}")
     # print(f"Result file length {len(result_file)}")
@@ -206,7 +212,7 @@ if __name__ == "__main__":
 
     # --- 3. Get the chunk vectors: from the cache if it is still valid, otherwise rebuild ---
     if os.path.exists(file_path):
-        saved_chunks, saved_vectors, hashCode = load_index(file_path)
+        saved_chunks, saved_vectors, hashCode= load_index(file_path)
         if hashCode != contentHash:
             # File was edited since the cache was built: re-embed the NEW chunks and overwrite.
             if os.path.splitext(args.filename)[1].lower() == ".txt":
@@ -214,7 +220,7 @@ if __name__ == "__main__":
             else:
                 content = read_pdf(args.filename)
 
-            result_file = chunk_text(content, 200)  
+            result_file = chunk_text(content, CHUNK_SIZE)  
             vector_file = embed(result_file)
             save_index(result_file, vector_file, file_path, contentHash)
         else:
@@ -227,7 +233,7 @@ if __name__ == "__main__":
             content = read_file(args.filename)
         else:
             content = read_pdf(args.filename)
-        result_file = chunk_text(content, 200)  
+        result_file = chunk_text(content, CHUNK_SIZE)  
         vector_file = embed(result_file)
         save_index(result_file, vector_file, file_path, contentHash)
 
