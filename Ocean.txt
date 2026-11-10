@@ -17,7 +17,7 @@ The deep sea is one of the least explored environments on our planet. Sunlight c
 **Paragraph 5: The Importance of Coral Reefs**
 
 Coral reefs are often called the rainforests of the sea because they support an enormous diversity of marine life. These underwater structures are formed by tiny animals called coral polyps. Although coral reefs cover a relatively small area of the ocean floor, they provide food and shelter for countless species. They also protect coastlines from waves and storms. Unfortunately, rising ocean temperatures, pollution, and destructive fishing practices threaten these valuable ecosystems.
-
+jq;j;qjd;d
 **Paragraph 6: How the Ocean Affects Climate**
 
 The ocean plays a major role in regulating the Earth's climate by absorbing and distributing heat around the planet. Ocean currents transport warm and cold water across vast distances, influencing temperatures and rainfall in different regions. The ocean also absorbs a significant amount of the carbon dioxide released into the atmosphere by human activities. However, this process contributes to ocean acidification, which can harm corals and other marine organisms that build shells or skeletons from calcium carbonate.
@@ -40,3 +40,5 @@ The ocean is a remarkable natural treasure that deserves our respect and protect
 
 
 Coral reefs are generally considered safe however, may require practice and understanding of navigating through the ocean before attempting a dive
+
+changes made in last line of the file
