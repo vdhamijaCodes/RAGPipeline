@@ -35,6 +35,16 @@ load_dotenv()      # Must run BEFORE OpenAI() so the key from .env is available.
 client = OpenAI()  # Reads OPENAI_API_KEY from the environment automatically.
 
 
+def hash_file(path):
+    try:
+        with open(path, "rb") as file:
+            contentHash = hashlib.sha256(file.read()).hexdigest()
+            return contentHash
+    except FileNotFoundError:
+        print(f"{path} not found in the current directory, please check the location")
+        sys.exit(1)
+
+
 def read_file(filename):
     """Return the whole file as one string. Exit with a clear message if missing."""
     try:
@@ -184,17 +194,12 @@ if __name__ == "__main__":
     # The hash changes if even one character of the file changes. We use it to
     # detect that a saved index is stale (built from an older version of the file).
     print(os.path.splitext(args.filename))
-    if os.path.splitext(args.filename)[1].lower() == ".txt":
-        content = read_file(args.filename)
-    else:
-        content = read_pdf(args.filename)
+    contentHash = hash_file(args.filename)
 
+    # result_file = chunk_text(content, 200)  # chunks of the CURRENT file
 
-    contentHash = hashlib.sha256(content.encode()).hexdigest()
-    result_file = chunk_text(content, 200)  # chunks of the CURRENT file
-
-    print(f"context.split length {len(content.split())}")
-    print(f"Result file length {len(result_file)}")
+    # print(f"context.split length {len(content.split())}")
+    # print(f"Result file length {len(result_file)}")
 
     # One cache file per document, e.g. "Ocean.txt_indexes.json" (created in the folder you run from).
     file_path = f"{os.path.basename(args.filename)}_indexes.json"
@@ -204,6 +209,12 @@ if __name__ == "__main__":
         saved_chunks, saved_vectors, hashCode = load_index(file_path)
         if hashCode != contentHash:
             # File was edited since the cache was built: re-embed the NEW chunks and overwrite.
+            if os.path.splitext(args.filename)[1].lower() == ".txt":
+                content = read_file(args.filename)
+            else:
+                content = read_pdf(args.filename)
+
+            result_file = chunk_text(content, 200)  
             vector_file = embed(result_file)
             save_index(result_file, vector_file, file_path, contentHash)
         else:
@@ -212,6 +223,11 @@ if __name__ == "__main__":
             vector_file = saved_vectors
     else:
         # First run for this document: embed everything and save the cache.
+        if os.path.splitext(args.filename)[1].lower() == ".txt":
+            content = read_file(args.filename)
+        else:
+            content = read_pdf(args.filename)
+        result_file = chunk_text(content, 200)  
         vector_file = embed(result_file)
         save_index(result_file, vector_file, file_path, contentHash)
 
