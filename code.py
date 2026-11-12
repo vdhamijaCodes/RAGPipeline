@@ -24,6 +24,7 @@ import sys
 import hashlib
 from pypdf import PdfReader
 import time
+import math
 
 # Minimum similarity for the best chunk. Below this, the question is treated
 # as unrelated to the document. 0.30 came from testing on-topic questions
@@ -32,8 +33,8 @@ import time
 THRESHOLD = 0.30
 CHUNK_SIZE = 200 # change this as the size of the file changes, big files would require a higher chunnk size to reduct the time taken, if the chunk size changes then delete any old jSON file else there will be problem
 EMBED_MODEL = "text-embedding-3-small" # change this only when you need more compute for embedding, models are expensive
-EXTRACT_VERSION = "pypdf-v1"  # this is version control, change this when the pay text is pulled changes    
-
+EXTRACT_VERSION = "pypdf-v2"  # this is version control, change this when the pay text is pulled changes    
+DEFAULT_EMBED_SIZE = 100
 
 load_dotenv()      # Must run BEFORE OpenAI() so the key from .env is available.
 client = OpenAI()  # Reads OPENAI_API_KEY from the environment automatically.
@@ -72,15 +73,11 @@ def read_pdf(filepath):
             for i in range(len(reader.pages)):
                 page_content.append(reader.pages[i].extract_text())  
             
-            if len("".join(page_content).strip()) == 0:
+            if len("\n".join(page_content).strip()) == 0:
                 print("the pdf does not have any extractable text, please upload a new file")
-                end_time = time.perf_counter()
-                print(f"total time taken {end_time-start_time:.6f} seconds")
                 sys.exit(1)
             else:
-                end_time = time.perf_counter()
-                print(f"total time taken {end_time-start_time:.6f} seconds")
-                return "".join(page_content)
+                return "\n".join(page_content)
 
     except FileNotFoundError:
         print(f"{filepath} not found in the current directory, please check the location")
@@ -115,15 +112,22 @@ def embed(text):
     The print is a debug line: it shows how many texts were sent (i.e. how much we pay for).
     """
     print(f"embedding {len(text)} text(s)")
-    response = client.embeddings.create(
-        model = EMBED_MODEL,
-        input = text,
-        encoding_format="float"
-    )
-
     embedding_vector = []
-    for item in response.data:  # response.data holds one item per input text
-        embedding_vector.append(item.embedding)
+    j = int(math.ceil(len(text)/DEFAULT_EMBED_SIZE))
+    i = 1
+    for start in range(0, len(text), DEFAULT_EMBED_SIZE):
+        print(f"{i}/{j} Embedding  now.....")
+        chunk = text[start : start + DEFAULT_EMBED_SIZE]
+        response = client.embeddings.create(
+            model = EMBED_MODEL,
+            input = chunk,
+            encoding_format="float"
+            )
+        for item in response.data:  # response.data holds one item per input text
+            embedding_vector.append(item.embedding)
+        i+=1
+    
+    print(f"Embedding vector length : {len(embedding_vector)}")
     return embedding_vector
 
 
@@ -200,7 +204,6 @@ if __name__ == "__main__":
     # --- 2. Read the document and fingerprint it ---
     # The hash changes if even one character of the file changes. We use it to
     # detect that a saved index is stale (built from an older version of the file).
-    print(os.path.splitext(args.filename))
     contentHash = hashfingerprint(hash_file(args.filename))
     
 
@@ -215,10 +218,10 @@ if __name__ == "__main__":
         saved_chunks, saved_vectors, hashCode= load_index(file_path)
         if hashCode != contentHash:
             # File was edited since the cache was built: re-embed the NEW chunks and overwrite.
-            if os.path.splitext(args.filename)[1].lower() == ".txt":
-                content = read_file(args.filename)
-            else:
+            if os.path.splitext(args.filename)[1].lower() == ".pdf":
                 content = read_pdf(args.filename)
+            else:
+                content = read_file(args.filename)
 
             result_file = chunk_text(content, CHUNK_SIZE)  
             vector_file = embed(result_file)
@@ -229,10 +232,10 @@ if __name__ == "__main__":
             vector_file = saved_vectors
     else:
         # First run for this document: embed everything and save the cache.
-        if os.path.splitext(args.filename)[1].lower() == ".txt":
-            content = read_file(args.filename)
-        else:
+        if os.path.splitext(args.filename)[1].lower() == ".pdf":
             content = read_pdf(args.filename)
+        else:
+            content = read_file(args.filename)
         result_file = chunk_text(content, CHUNK_SIZE)  
         vector_file = embed(result_file)
         save_index(result_file, vector_file, file_path, contentHash)
