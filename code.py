@@ -34,7 +34,7 @@ THRESHOLD = 0.30
 CHUNK_SIZE = 200 # change this as the size of the file changes, big files would require a higher chunnk size to reduct the time taken, if the chunk size changes then delete any old jSON file else there will be problem
 EMBED_MODEL = "text-embedding-3-small" # change this only when you need more compute for embedding, models are expensive
 EXTRACT_VERSION = "pypdf-v2"  # this is version control, change this when the pay text is pulled changes    
-DEFAULT_EMBED_SIZE = 100
+DEFAULT_EMBED_SIZE = 2
 
 load_dotenv()      # Must run BEFORE OpenAI() so the key from .env is available.
 client = OpenAI()  # Reads OPENAI_API_KEY from the environment automatically.
@@ -63,46 +63,67 @@ def read_file(filename):
         sys.exit(1)
 
 
+
 def read_pdf(filepath):
     start_time = time.perf_counter()
+
     try:
         with open(filepath, "rb") as file:
             reader = PdfReader(file)
             page_content = []
-            
-            for i in range(len(reader.pages)):
-                page_content.append(reader.pages[i].extract_text())  
-            
-            if len("\n".join(page_content).strip()) == 0:
-                print("the pdf does not have any extractable text, please upload a new file")
+
+            for i, page in enumerate(reader.pages):
+                extracted = page.extract_text() or ""
+
+                print(f"Page {i+1}: {len(extracted)} characters")
+
+                page_content.append(extracted)
+
+            full_text = "\n".join(page_content)
+
+            if not full_text.strip():
+                print("PDF has no extractable text")
                 sys.exit(1)
-            else:
-                return "\n".join(page_content)
+
+            print("\n===== TCP/IP EXTRACTION CHECK =====")
+
+            for term in ["TCP", "IP", "reliable", "ordered delivery"]:
+                print(f"{term}: {full_text.lower().count(term.lower())} occurrences")
+
+            print("===================================")
+
+            return full_text
 
     except FileNotFoundError:
-        print(f"{filepath} not found in the current directory, please check the location")
-        end_time = time.perf_counter()
-        print(f"total time taken {end_time-start_time:.6f} seconds")
+        print(f"{filepath} not found")
         sys.exit(1)
 
 
 
-def chunk_text(text, size):
-    """Split text into chunks of `size` words. Returns a list of strings.
 
-    Example: 7 words with size=4 -> ['w1 w2 w3 w4', 'w5 w6 w7'] (last chunk may be shorter).
-    """
-    
-    lis = []
+
+def chunk_text(text, size):
+    """Split text into chunks of `size` words."""
+
+    if size <= 0:
+        raise ValueError("Chunk size must be greater than zero")
+
     words = text.split()
-    j = 0  # start position of the current chunk
-    for i in range(len(words)):  # 'i' is unused; the loop just guarantees enough iterations
-        if j >= len(words):      # ran past the end, so we are done
-            return lis
-        else:
-            lis.append(" ".join(words[j:size+j]))  # slice of words, joined back into a string
-            j = size+j
-    return lis
+    chunks = []
+
+    for j in range(0, len(words), size):
+        chunk = " ".join(words[j:j + size])
+        chunks.append(chunk)
+
+    print("\n===== SEARCHING FOR TCP/IP DEFINITION =====")
+
+    for i, chunk in enumerate(chunks):
+        if "reliable, ordered delivery" in chunk:
+            print(f"Definition found in chunk: {i}")
+            print(chunk)
+
+    return chunks
+
 
 
 def embed(text):
@@ -264,12 +285,23 @@ if __name__ == "__main__":
 
     score = sorted(score, key=lambda x: x[0], reverse=True)  # best match first
 
-    # --- 6. Answer, but only if the best chunk is relevant enough ---
-    if score[0][0] >= THRESHOLD:
-        # Join the top 3 chunk texts with blank lines so the model can see where each one ends.
-        print(answer_question(args.question, "\n\n".join([item[1] for item in score[:3]])))
-    else:
-        print("Sorry, I could not find anything related to the question you have asked")
+    # # --- 6. Answer, but only if the best chunk is relevant enough ---
+    # if score[0][0] >= THRESHOLD:
+    #     # Join the top 3 chunk texts with blank lines so the model can see where each one ends.
+    #     print(answer_question(args.question, "\n\n".join([item[1] for item in score[:5]])))
+    # else:
+    #     print("Sorry, I could not find anything related to the question you have asked")
+
+    test_context = result_file[4]
+
+    print("===== DIRECT CHUNK TEST =====")
+    print(test_context)
+
+    print("\n===== LLM RESPONSE =====")
+    print(answer_question(
+    "What is the difference between TCP and IP, and what role does each play in delivering data across networks?",
+    test_context
+    ))
 
     end_time = time.perf_counter()
     print(f"total time taken {end_time-start_time:.6f} seconds")
