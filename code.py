@@ -31,10 +31,10 @@ import math
 # (best scores 0.52+) vs off-topic ones (best scores 0.15 or lower).
 # It is specific to the text-embedding-3-small model; re-measure if you change models.
 THRESHOLD = 0.30
-CHUNK_SIZE = 200 # change this as the size of the file changes, big files would require a higher chunnk size to reduct the time taken, if the chunk size changes then delete any old jSON file else there will be problem
+CHUNK_SIZE = 100 # change this as the size of the file changes, big files would require a higher chunnk size to reduct the time taken, if the chunk size changes then delete any old jSON file else there will be problem
 EMBED_MODEL = "text-embedding-3-small" # change this only when you need more compute for embedding, models are expensive
 EXTRACT_VERSION = "pypdf-v2"  # this is version control, change this when the pay text is pulled changes    
-DEFAULT_EMBED_SIZE = 2
+DEFAULT_EMBED_SIZE = 100
 
 load_dotenv()      # Must run BEFORE OpenAI() so the key from .env is available.
 client = OpenAI()  # Reads OPENAI_API_KEY from the environment automatically.
@@ -85,13 +85,6 @@ def read_pdf(filepath):
                 print("PDF has no extractable text")
                 sys.exit(1)
 
-            print("\n===== TCP/IP EXTRACTION CHECK =====")
-
-            for term in ["TCP", "IP", "reliable", "ordered delivery"]:
-                print(f"{term}: {full_text.lower().count(term.lower())} occurrences")
-
-            print("===================================")
-
             return full_text
 
     except FileNotFoundError:
@@ -114,13 +107,6 @@ def chunk_text(text, size):
     for j in range(0, len(words), size):
         chunk = " ".join(words[j:j + size])
         chunks.append(chunk)
-
-    print("\n===== SEARCHING FOR TCP/IP DEFINITION =====")
-
-    for i, chunk in enumerate(chunks):
-        if "reliable, ordered delivery" in chunk:
-            print(f"Definition found in chunk: {i}")
-            print(chunk)
 
     return chunks
 
@@ -152,29 +138,52 @@ def embed(text):
     return embedding_vector
 
 
-def answer_question(question, chunks):
-    """Ask the chat model to answer from the given chunks only (the 'G' in RAG).
 
-    The system prompt forbids using outside knowledge, which is what makes the model say
-    "not in the document" for questions the chunks can't answer.
-    Low temperature (0.3) keeps answers focused. max_tokens caps the answer length.
-    """
+def answer_question(question, context):
+
     response = client.chat.completions.create(
-        model = "gpt-4o-mini",
-        messages = [
+        model="gpt-4o-mini",
+        messages=[
             {
-                "role" : "system",
-                "content" : "You are a question-answering assistant operating within a Retrieval-Augmented Generation (RAG) system. Your task is to answer the user's question using ONLY the information explicitly available in the provided context. Do not invent answer, if the answer to the question is not available in the data chunk then say clearly that the document doesn't contain the answer"
+                "role": "system",
+                "content": """
+                You are a question-answering system.
+
+                Answer using ONLY the information in the
+                provided context.
+
+                Carefully examine ALL the context passages
+                before deciding whether the answer is available.
+
+                If the context contains sufficient information,
+                provide a clear and accurate answer.
+
+                If the context does not contain sufficient
+                information, respond:
+                "The document doesn't contain the answer."
+
+                Do not use external knowledge or invent facts.
+                """
             },
             {
-                "role" : "user",
-                "content" : f"Here is the chunk of the data  : {chunks} \n this must be used to answer the following question : {question}"
+                "role": "user",
+                "content": f"""
+                <context>
+                {context}
+                </context>
+
+                <question>
+                {question}
+                </question>
+                """
             }
         ],
-        temperature = 0.3,
-        max_tokens = 300
+        temperature=0,
+        max_tokens=300
     )
-    return response.choices[0].message.content  # dig the answer text out of the response
+
+    return response.choices[0].message.content
+
 
 
 def cosine_similarity(a, b):
@@ -292,16 +301,15 @@ if __name__ == "__main__":
     # else:
     #     print("Sorry, I could not find anything related to the question you have asked")
 
-    test_context = result_file[4]
 
-    print("===== DIRECT CHUNK TEST =====")
-    print(test_context)
+    if score[0][0] >= THRESHOLD:
 
-    print("\n===== LLM RESPONSE =====")
-    print(answer_question(
-    "What is the difference between TCP and IP, and what role does each play in delivering data across networks?",
-    test_context
-    ))
+        selected_chunk = [item[1] for item in score[:10]]
+        context = "\n\n".join(selected_chunk)
+        print(answer_question(args.question, context))
+    else:
+        print("We Could not find any relevant information regarding the question")
+    
 
     end_time = time.perf_counter()
     print(f"total time taken {end_time-start_time:.6f} seconds")
