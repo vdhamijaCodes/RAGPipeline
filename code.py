@@ -25,6 +25,7 @@ import hashlib
 from pypdf import PdfReader
 import time
 import math
+import io
 
 # Minimum similarity for the best chunk. Below this, the question is treated
 # as unrelated to the document. 0.30 came from testing on-topic questions
@@ -39,6 +40,9 @@ DEFAULT_EMBED_SIZE = 100
 load_dotenv()      # Must run BEFORE OpenAI() so the key from .env is available.
 client = OpenAI()  # Reads OPENAI_API_KEY from the environment automatically.
 
+class DocumentError(Exception):
+    pass
+
 def hashfingerprint(file_hash):
     fingerprint = hashlib.sha256(f"{file_hash}|{CHUNK_SIZE}|{EMBED_MODEL}|{EXTRACT_VERSION}".encode()).hexdigest()
     return fingerprint
@@ -52,48 +56,28 @@ def hash_file(path):
         print(f"{path} not found in the current directory, please check the location")
         sys.exit(1)
 
+def hash_bytes(data):
+    return hashlib.sha256(data).hexdigest()
 
-def read_file(filename):
-    """Return the whole file as one string. Exit with a clear message if missing."""
-    try:
-        with open(filename, "r", encoding="UTF-8") as file:
-            return file.read()
-    except FileNotFoundError:
-        print(f"{filename} not found in the current directory, please check the location")
-        sys.exit(1)
+def read_file(data):
+    return data.decode("UTF-8")
 
 
+def read_pdf(PdfBytes):
+    stream =  io.BytesIO(PdfBytes)
+    reader = PdfReader(stream)
+    page_content = []
 
-def read_pdf(filepath):
-    start_time = time.perf_counter()
+    for i, page in enumerate(reader.pages):
+        extracted = page.extract_text() or ""
+        page_content.append(extracted)
 
-    try:
-        with open(filepath, "rb") as file:
-            reader = PdfReader(file)
-            page_content = []
+    full_text = "\n".join(page_content)
 
-            for i, page in enumerate(reader.pages):
-                extracted = page.extract_text() or ""
+    if not full_text.strip():
+        raise DocumentError("PDF has no extractable text")
 
-                print(f"Page {i+1}: {len(extracted)} characters")
-
-                page_content.append(extracted)
-
-            full_text = "\n".join(page_content)
-
-            if not full_text.strip():
-                print("PDF has no extractable text")
-                sys.exit(1)
-
-            return full_text
-
-    except FileNotFoundError:
-        print(f"{filepath} not found")
-        sys.exit(1)
-
-
-
-
+    return full_text
 
 def chunk_text(text, size):
     """Split text into chunks of `size` words."""
@@ -234,82 +218,90 @@ if __name__ == "__main__":
     # --- 2. Read the document and fingerprint it ---
     # The hash changes if even one character of the file changes. We use it to
     # detect that a saved index is stale (built from an older version of the file).
-    contentHash = hashfingerprint(hash_file(args.filename))
-    
+    try:
+        with open(args.filename, "rb") as file:
+            byteData = file.read()
+            
+        contentHash = hashfingerprint(hash_file(args.filename))
+        
 
-    # print(f"context.split length {len(content.split())}")
-    # print(f"Result file length {len(result_file)}")
+        # print(f"context.split length {len(content.split())}")
+        # print(f"Result file length {len(result_file)}")
 
-    # One cache file per document, e.g. "Ocean.txt_indexes.json" (created in the folder you run from).
-    file_path = f"{os.path.basename(args.filename)}_indexes.json"
+        # One cache file per document, e.g. "Ocean.txt_indexes.json" (created in the folder you run from).
+        file_path = f"{os.path.basename(args.filename)}_indexes.json"
 
-    # --- 3. Get the chunk vectors: from the cache if it is still valid, otherwise rebuild ---
-    if os.path.exists(file_path):
-        saved_chunks, saved_vectors, hashCode= load_index(file_path)
-        if hashCode != contentHash:
-            # File was edited since the cache was built: re-embed the NEW chunks and overwrite.
+        # --- 3. Get the chunk vectors: from the cache if it is still valid, otherwise rebuild ---
+        if os.path.exists(file_path):
+            saved_chunks, saved_vectors, hashCode= load_index(file_path)
+            if hashCode != contentHash:
+                # File was edited since the cache was built: re-embed the NEW chunks and overwrite.
+                if os.path.splitext(args.filename)[1].lower() == ".pdf":
+                    content = read_pdf(args.filename)
+                else:
+                    content = read_file(args.filename)
+
+                result_file = chunk_text(content, CHUNK_SIZE)  
+                vector_file = embed(result_file)
+                save_index(result_file, vector_file, file_path, contentHash)
+            else:
+                # Cache is valid: reuse it, with no embedding cost for the document.
+                result_file = saved_chunks
+                vector_file = saved_vectors
+        else:
+            # First run for this document: embed everything and save the cache.
             if os.path.splitext(args.filename)[1].lower() == ".pdf":
                 content = read_pdf(args.filename)
             else:
                 content = read_file(args.filename)
-
             result_file = chunk_text(content, CHUNK_SIZE)  
             vector_file = embed(result_file)
             save_index(result_file, vector_file, file_path, contentHash)
+
+
+        # for i in range(len(vector_file)):
+        #     print(f"Embedding text {i+1} : {result_file[i]} , {vector_file[i]}")
+
+        # NOTE: the hash covers only the file's text. If you change the chunk size (40)
+        # or the embedding model, delete the *_indexes.json files by hand, or the old
+        # vectors will be reused wrongly.
+
+        # --- 4. Embed the question ---
+        # chunk_text with size=len(question) forces the question into exactly one chunk
+        # (it never has more words than characters). embed() wants a list, hence this.
+        result_question = chunk_text(args.question, len(args.question))
+        vector_question = embed(result_question)
+
+        # --- 5. Score every chunk against the question, as [score, chunk_text] pairs ---
+        score = []
+        i = 0
+        for vec in vector_file:
+            s = cosine_similarity(vec, vector_question[0])
+            score.append([s, result_file[i]])
+            i += 1
+
+        score = sorted(score, key=lambda x: x[0], reverse=True)  # best match first
+
+        # # --- 6. Answer, but only if the best chunk is relevant enough ---
+        # if score[0][0] >= THRESHOLD:
+        #     # Join the top 3 chunk texts with blank lines so the model can see where each one ends.
+        #     print(answer_question(args.question, "\n\n".join([item[1] for item in score[:5]])))
+        # else:
+        #     print("Sorry, I could not find anything related to the question you have asked")
+
+
+        if score[0][0] >= THRESHOLD:
+
+            selected_chunk = [item[1] for item in score[:10]]
+            context = "\n\n".join(selected_chunk)
+            print(answer_question(args.question, context))
         else:
-            # Cache is valid: reuse it, with no embedding cost for the document.
-            result_file = saved_chunks
-            vector_file = saved_vectors
-    else:
-        # First run for this document: embed everything and save the cache.
-        if os.path.splitext(args.filename)[1].lower() == ".pdf":
-            content = read_pdf(args.filename)
-        else:
-            content = read_file(args.filename)
-        result_file = chunk_text(content, CHUNK_SIZE)  
-        vector_file = embed(result_file)
-        save_index(result_file, vector_file, file_path, contentHash)
+            print("We Could not find any relevant information regarding the question")
+        
 
+        end_time = time.perf_counter()
+        print(f"total time taken {end_time-start_time:.6f} seconds")
 
-    # for i in range(len(vector_file)):
-    #     print(f"Embedding text {i+1} : {result_file[i]} , {vector_file[i]}")
-
-    # NOTE: the hash covers only the file's text. If you change the chunk size (40)
-    # or the embedding model, delete the *_indexes.json files by hand, or the old
-    # vectors will be reused wrongly.
-
-    # --- 4. Embed the question ---
-    # chunk_text with size=len(question) forces the question into exactly one chunk
-    # (it never has more words than characters). embed() wants a list, hence this.
-    result_question = chunk_text(args.question, len(args.question))
-    vector_question = embed(result_question)
-
-    # --- 5. Score every chunk against the question, as [score, chunk_text] pairs ---
-    score = []
-    i = 0
-    for vec in vector_file:
-        s = cosine_similarity(vec, vector_question[0])
-        score.append([s, result_file[i]])
-        i += 1
-
-    score = sorted(score, key=lambda x: x[0], reverse=True)  # best match first
-
-    # # --- 6. Answer, but only if the best chunk is relevant enough ---
-    # if score[0][0] >= THRESHOLD:
-    #     # Join the top 3 chunk texts with blank lines so the model can see where each one ends.
-    #     print(answer_question(args.question, "\n\n".join([item[1] for item in score[:5]])))
-    # else:
-    #     print("Sorry, I could not find anything related to the question you have asked")
-
-
-    if score[0][0] >= THRESHOLD:
-
-        selected_chunk = [item[1] for item in score[:10]]
-        context = "\n\n".join(selected_chunk)
-        print(answer_question(args.question, context))
-    else:
-        print("We Could not find any relevant information regarding the question")
-    
-
-    end_time = time.perf_counter()
-    print(f"total time taken {end_time-start_time:.6f} seconds")
+    except DocumentError as e:
+        print(e)
+        sys.exit(1)
