@@ -23,6 +23,7 @@ import os
 import sys
 import hashlib
 from pypdf import PdfReader
+from pypdf.errors import PyPdfError
 import time
 import math
 import io
@@ -40,6 +41,13 @@ DEFAULT_EMBED_SIZE = 100
 load_dotenv()      # Must run BEFORE OpenAI() so the key from .env is available.
 client = OpenAI()  # Reads OPENAI_API_KEY from the environment automatically.
 
+def read_bytes(path):
+    try: 
+        with open(path, "rb") as file:
+            return file.read()
+    except FileNotFoundError:
+        raise DocumentError(f"{path} not found, check the file or  path")
+
 class DocumentError(Exception):
     pass
 
@@ -52,7 +60,7 @@ def hash_file(path):
         with open(path, "rb") as file:
             file_hash = hashlib.sha256(file.read()).hexdigest()
             return file_hash
-    except FileNotFoundError:
+    except FileNotFoundError as e:
         print(f"{path} not found in the current directory, please check the location")
         sys.exit(1)
 
@@ -60,17 +68,25 @@ def hash_bytes(data):
     return hashlib.sha256(data).hexdigest()
 
 def read_file(data):
-    return data.decode("UTF-8")
+    try:
+        return data.decode("UTF-8")
+    except UnicodeDecodeError:
+        raise DocumentError("this file is not readable as UTF-8 text")
 
 
 def read_pdf(PdfBytes):
-    stream =  io.BytesIO(PdfBytes)
-    reader = PdfReader(stream)
-    page_content = []
+    try:
 
-    for i, page in enumerate(reader.pages):
-        extracted = page.extract_text() or ""
-        page_content.append(extracted)
+        stream =  io.BytesIO(PdfBytes)
+        reader = PdfReader(stream)
+        page_content = []
+
+        for page in reader.pages:
+            extracted = page.extract_text() or ""
+            page_content.append(extracted)
+        
+    except PyPdfError:
+        raise DocumentError("This PDF is damanged or password protected")
 
     full_text = "\n".join(page_content)
 
@@ -92,6 +108,9 @@ def chunk_text(text, size):
         chunk = " ".join(words[j:j + size])
         chunks.append(chunk)
 
+    if len(chunks) == 0:
+        raise DocumentError("file is empty")
+
     return chunks
 
 
@@ -102,6 +121,8 @@ def embed(text):
     One API call handles the whole list, and the vectors come back in the same order.
     The print is a debug line: it shows how many texts were sent (i.e. how much we pay for).
     """
+
+    
     print(f"embedding {len(text)} text(s)")
     embedding_vector = []
     j = int(math.ceil(len(text)/DEFAULT_EMBED_SIZE))
@@ -219,11 +240,9 @@ if __name__ == "__main__":
     # The hash changes if even one character of the file changes. We use it to
     # detect that a saved index is stale (built from an older version of the file).
     try:
-        with open(args.filename, "rb") as file:
-            byteData = file.read()
-            
-        contentHash = hashfingerprint(hash_file(args.filename))
-        
+        byteData = read_bytes(args.filename)
+        file_hash = hash_bytes(byteData)
+        contentHash = hashfingerprint(file_hash)
 
         # print(f"context.split length {len(content.split())}")
         # print(f"Result file length {len(result_file)}")
@@ -237,11 +256,12 @@ if __name__ == "__main__":
             if hashCode != contentHash:
                 # File was edited since the cache was built: re-embed the NEW chunks and overwrite.
                 if os.path.splitext(args.filename)[1].lower() == ".pdf":
-                    content = read_pdf(args.filename)
+                    content = read_pdf(byteData)
                 else:
-                    content = read_file(args.filename)
+                    content = read_file(byteData)
 
-                result_file = chunk_text(content, CHUNK_SIZE)  
+                result_file = chunk_text(content, CHUNK_SIZE)
+
                 vector_file = embed(result_file)
                 save_index(result_file, vector_file, file_path, contentHash)
             else:
@@ -251,9 +271,9 @@ if __name__ == "__main__":
         else:
             # First run for this document: embed everything and save the cache.
             if os.path.splitext(args.filename)[1].lower() == ".pdf":
-                content = read_pdf(args.filename)
+                content = read_pdf(byteData)
             else:
-                content = read_file(args.filename)
+                content = read_file(byteData)
             result_file = chunk_text(content, CHUNK_SIZE)  
             vector_file = embed(result_file)
             save_index(result_file, vector_file, file_path, contentHash)
@@ -269,6 +289,9 @@ if __name__ == "__main__":
         # --- 4. Embed the question ---
         # chunk_text with size=len(question) forces the question into exactly one chunk
         # (it never has more words than characters). embed() wants a list, hence this.
+
+        if not args.question.strip():
+            raise DocumentError("please enter a question")
         result_question = chunk_text(args.question, len(args.question))
         vector_question = embed(result_question)
 
