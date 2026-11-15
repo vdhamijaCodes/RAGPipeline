@@ -55,14 +55,6 @@ def hashfingerprint(file_hash):
     fingerprint = hashlib.sha256(f"{file_hash}|{CHUNK_SIZE}|{EMBED_MODEL}|{EXTRACT_VERSION}".encode()).hexdigest()
     return fingerprint
 
-def hash_file(path):
-    try:
-        with open(path, "rb") as file:
-            file_hash = hashlib.sha256(file.read()).hexdigest()
-            return file_hash
-    except FileNotFoundError as e:
-        print(f"{path} not found in the current directory, please check the location")
-        sys.exit(1)
 
 def hash_bytes(data):
     return hashlib.sha256(data).hexdigest()
@@ -226,6 +218,32 @@ def load_index(path):
         data = json.load(file)
 
     return data["Chunks"], data["vectors"], data["hashCode"]
+
+def extract_text(data, filename):
+    if os.path.splitext(filename)[1].lower() == ".pdf":
+        return read_pdf(data)
+    else:
+        return read_file(data)
+
+def build_index(data, filename, cache_path = None):
+    file_hash = hash_bytes(data)
+    fingerprint = hashfingerprint(file_hash)
+    cache_ok = False
+    if os.path.exists(cache_path) and cache_path is not None:
+        chunks, vectors, ex_fingerprint = load_index(cache_path)
+        if fingerprint == ex_fingerprint:
+            cache_ok = True
+
+    if cache_ok:
+        content = extract_text(data, filename)
+        chunks = chunk_text(content, CHUNK_SIZE)
+        vectors = embed(chunks)
+        
+    else:
+        save_index(chunks, vectors, cache_path, fingerprint)
+
+    return chunks, vectors, fingerprint
+
 
 
 if __name__ == "__main__":
