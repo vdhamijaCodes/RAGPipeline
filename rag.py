@@ -37,6 +37,7 @@ CHUNK_SIZE = 100 # change this as the size of the file changes, big files would 
 EMBED_MODEL = "text-embedding-3-small" # change this only when you need more compute for embedding, models are expensive
 EXTRACT_VERSION = "pypdf-v2"  # this is version control, change this when the pay text is pulled changes    
 DEFAULT_EMBED_SIZE = 100
+TOP_K = 10
 
 load_dotenv()      # Must run BEFORE OpenAI() so the key from .env is available.
 client = OpenAI()  # Reads OPENAI_API_KEY from the environment automatically.
@@ -248,10 +249,32 @@ def build_index(data, filename, cache_path = None):
         vectors = embed(chunks)
         if cache_path is not None:    
             save_index(chunks, vectors, cache_path, fingerprint)
-   
+
     return chunks, vectors, fingerprint
 
 
+def retrieve(question, chunks, vectors, top_k=TOP_K):
+    if question is None or not question.strip():
+        raise DocumentError("Enter a question")
+
+    vector_question  = embed([question])
+    score = []
+    for i, vec in enumerate(vectors):
+        s = cosine_similarity(vec, vector_question[0])
+        score.append([s, chunks[i]])
+
+    score = sorted(score, key=lambda x: x[0], reverse=True)
+   
+    return score[:top_k]
+
+def answer(question, chunks, vectors):
+    top = retrieve(question, chunks, vectors)
+    if top[0][0] < THRESHOLD:
+        return {"answer": "no relevant information in the document", "sources": [], "best_score": top[0][0]}
+    else:
+        sources = [item[1] for item in top]
+        context = "\n\n".join(sources)
+        return {"answer": answer_question(question, context), "sources": sources, "best_score": top[0][0]}
 
 if __name__ == "__main__":
     # --- 1. Command-line input: the file to search and the question to ask ---
@@ -270,39 +293,9 @@ if __name__ == "__main__":
 
 
         result_file, vector_file, fingerprint = build_index(byteData, args.filename, file_path)
-
-        if not args.question.strip():
-            raise DocumentError("please enter a question")
-        result_question = chunk_text(args.question, len(args.question))
-        vector_question = embed(result_question)
-
-        # --- 5. Score every chunk against the question, as [score, chunk_text] pairs ---
-        score = []
-        i = 0
-        for vec in vector_file:
-            s = cosine_similarity(vec, vector_question[0])
-            score.append([s, result_file[i]])
-            i += 1
-
-        score = sorted(score, key=lambda x: x[0], reverse=True)  # best match first
-
-        # # --- 6. Answer, but only if the best chunk is relevant enough ---
-        # if score[0][0] >= THRESHOLD:
-        #     # Join the top 3 chunk texts with blank lines so the model can see where each one ends.
-        #     print(answer_question(args.question, "\n\n".join([item[1] for item in score[:5]])))
-        # else:
-        #     print("Sorry, I could not find anything related to the question you have asked")
-
-
-        if score[0][0] >= THRESHOLD:
-
-            selected_chunk = [item[1] for item in score[:10]]
-            context = "\n\n".join(selected_chunk)
-            print(answer_question(args.question, context))
-        else:
-            print("We Could not find any relevant information regarding the question")
+        result  = answer(args.question, result_file, vector_file)
+        print(result["answer"])
         
-
         end_time = time.perf_counter()
         print(f"total time taken {end_time-start_time:.6f} seconds")
 
