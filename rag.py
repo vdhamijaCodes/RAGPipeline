@@ -38,6 +38,8 @@ EMBED_MODEL = "text-embedding-3-small" # change this only when you need more com
 EXTRACT_VERSION = "pypdf-v2"  # this is version control, change this when the pay text is pulled changes    
 DEFAULT_EMBED_SIZE = 100
 TOP_K = 10
+MAX_FILE = 10 # maximum file size
+MAX_PAGES = 50 # maximum number of pages in the document
 
 load_dotenv()      # Must run BEFORE OpenAI() so the key from .env is available.
 client = OpenAI()  # Reads OPENAI_API_KEY from the environment automatically.
@@ -69,15 +71,17 @@ def read_file(data):
 
 def read_pdf(PdfBytes):
     try:
-
         stream =  io.BytesIO(PdfBytes)
         reader = PdfReader(stream)
         page_content = []
 
-        for page in reader.pages:
-            extracted = page.extract_text() or ""
-            page_content.append(extracted)
-        
+        if len(reader.pages) <= MAX_PAGES:
+            for page in reader.pages:
+                extracted = page.extract_text() or ""
+                page_content.append(extracted)
+        else:
+            raise DocumentError(f"The document contains {len(reader.pages)}pages, while the limit is {MAX_PAGES} pages")
+    
     except PyPdfError:
         raise DocumentError("This PDF is damanged or password protected")
 
@@ -284,9 +288,6 @@ if __name__ == "__main__":
     parser.add_argument("question", help="Enter the question you would like the system to answer")
     args = parser.parse_args()
 
-    # --- 2. Read the document and fingerprint it ---
-    # The hash changes if even one character of the file changes. We use it to
-    # detect that a saved index is stale (built from an older version of the file).
     try:
         byteData = read_bytes(args.filename)
         file_path = f"{os.path.basename(args.filename)}_indexes.json"
@@ -295,7 +296,7 @@ if __name__ == "__main__":
         result_file, vector_file, fingerprint = build_index(byteData, args.filename, file_path)
         result  = answer(args.question, result_file, vector_file)
         print(result["answer"])
-        
+
         end_time = time.perf_counter()
         print(f"total time taken {end_time-start_time:.6f} seconds")
 

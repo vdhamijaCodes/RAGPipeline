@@ -2,17 +2,19 @@ import streamlit as st
 from rag import build_index, DocumentError, answer
 
 
+MAX_SIZE = 10
 
 @st.cache_resource(max_entries=5, ttl = "30m")
 def wrapper(data, filename):
     return build_index(data, filename)
 
 try:
-    file = st.file_uploader("Attach a .pdf or .txt file", type=["pdf","txt"])
+    file = st.file_uploader("Attach a .pdf or .txt file", type=["pdf","txt"], max_upload_size=MAX_SIZE)
     if file is None:
         st.info("Upload a file to begin")
         st.stop()
-    
+
+
     data = file.getvalue()
     filename = file.name
     with st.spinner("Reading your document..."):
