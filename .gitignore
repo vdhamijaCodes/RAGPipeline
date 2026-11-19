@@ -2,3 +2,4 @@
 __pycache__/
 "/home/varun/Desktop/RAG/Ocean.txt_indexes.json"
 *_indexes.json
+*.pdf
