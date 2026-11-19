@@ -27,6 +27,8 @@ from pypdf.errors import PyPdfError
 import time
 import math
 import io
+import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 
 # Minimum similarity for the best chunk. Below this, the question is treated
 # as unrelated to the document. 0.30 came from testing on-topic questions
@@ -39,10 +41,25 @@ EXTRACT_VERSION = "pypdf-v2"  # this is version control, change this when the pa
 DEFAULT_EMBED_SIZE = 100
 TOP_K = 10
 MAX_FILE = 10 # maximum file size
-MAX_PAGES = 50 # maximum number of pages in the document
+MAX_PAGES = 100 # maximum number of pages in the document
 
-load_dotenv()      # Must run BEFORE OpenAI() so the key from .env is available.
-client = OpenAI()  # Reads OPENAI_API_KEY from the environment automatically.
+load_dotenv() 
+
+_client = None
+def get_client():
+    global _client
+    if _client is not None:
+        return _client
+
+    key = os.environ.get('OPENAI_API_KEY')
+    if not key:
+        try:
+            key = st.secrets['OPENAI_API_KEY']
+        except(KeyError,StreamlitSecretNotFoundError):
+            key = None
+
+    _client = OpenAI(api_key=key)
+    return _client
 
 def read_bytes(path):
     try: 
@@ -127,7 +144,7 @@ def embed(text):
     for start in range(0, len(text), DEFAULT_EMBED_SIZE):
         print(f"{i}/{j} Embedding  now.....")
         chunk = text[start : start + DEFAULT_EMBED_SIZE]
-        response = client.embeddings.create(
+        response = get_client().embeddings.create(
             model = EMBED_MODEL,
             input = chunk,
             encoding_format="float"
@@ -143,7 +160,7 @@ def embed(text):
 
 def answer_question(question, context):
 
-    response = client.chat.completions.create(
+    response = get_client().chat.completions.create(
         model="gpt-4o-mini",
         messages=[
             {

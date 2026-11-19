@@ -3,6 +3,8 @@ from rag import build_index, DocumentError, answer
 
 
 MAX_SIZE = 10
+MAX_QUESTIONS = 10
+
 
 @st.cache_resource(max_entries=5, ttl = "30m")
 def wrapper(data, filename):
@@ -21,18 +23,27 @@ try:
         chunks, vectors, fingerprint = wrapper(data, filename)
 
     question = st.text_input("Ask a question : ")
+    if "count" not in st.session_state:
+        st.session_state.count = 1
     if st.button("Ask"):
-        if question.strip():
+        if st.session_state.count <= MAX_QUESTIONS:
+            if question.strip():
+                with st.spinner(text="looking for an answer..."):
+                    result = answer(question, chunks, vectors)
+                    st.write(result["answer"])
+                with st.expander("Check the sources used : "):
+                    st.write(
+                        f"remaining question : {st.session_state['count']}\n"
 
-            with st.spinner(text="looking for an answer..."):
-                result = answer(question, chunks, vectors)
-                st.write(result["answer"])
-            with st.expander("Check the sources used : "):
-                st.write(
-                    f"sources : {result['sources']}"
-                )
+                        f"sources : {result['sources']}"
+                    )
+            else:
+                st.warning("Please Type a question")
+            st.session_state.count +=1
         else:
-            st.warning("Please Type a question")
+            st.warning("You run out of the maximum question left, kindly restart a new session")
+
+    
 except DocumentError as e:
     st.error(str(e))
 
