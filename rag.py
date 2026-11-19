@@ -57,7 +57,8 @@ def get_client():
             key = st.secrets['OPENAI_API_KEY']
         except(KeyError,StreamlitSecretNotFoundError):
             key = None
-
+    if not key:
+        raise DocumentError('OPENAI API KEY NOT FOUND')
     _client = OpenAI(api_key=key)
     return _client
 
