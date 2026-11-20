@@ -1,20 +1,13 @@
-"""
-Mini RAG tool: ask a question about a text file.
+'''
+RAG :  Retreival Augmented Tool
 
-How it works (the whole idea in 5 steps):
-  1. Read the file and split it into chunks of ~200(CHANGE THE CHUNK SIZE IF NEEDED) words.
-  2. Turn each chunk into a vector (embedding) so "meaning" can be compared with math.
-     These vectors are cached in a JSON file so we only pay for them once.
-  3. Embed the question the same way.
-  4. Rank the chunks by cosine similarity to the question and keep the top 3.
-  5. If the best score clears THRESHOLD, send those 3 chunks plus the question
-     to the chat model, which answers using ONLY those chunks.
+Primary role, take document as imoort and then break the content of the document into chunks, embed them through Open AI emebedding, compare it with the question vecton
+using cosine similarity and then returning the final response with the help of the LLM model where the question the context are sent
 
-Usage:  python3 code.py <file.txt> "<question>"
-Needs:  OPENAI_API_KEY in a .env file next to this script.
-"""
+'''
 
-from openai import OpenAI
+
+from openai import OpenAI 
 from dotenv import load_dotenv
 import numpy as np
 import argparse
@@ -30,37 +23,45 @@ import io
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
-# Minimum similarity for the best chunk. Below this, the question is treated
-# as unrelated to the document. 0.30 came from testing on-topic questions
-# (best scores 0.52+) vs off-topic ones (best scores 0.15 or lower).
-# It is specific to the text-embedding-3-small model; re-measure if you change models.
-THRESHOLD = 0.30
-CHUNK_SIZE = 100 # change this as the size of the file changes, big files would require a higher chunnk size to reduct the time taken, if the chunk size changes then delete any old jSON file else there will be problem
-EMBED_MODEL = "text-embedding-3-small" # change this only when you need more compute for embedding, models are expensive
-EXTRACT_VERSION = "pypdf-v2"  # this is version control, change this when the pay text is pulled changes    
-DEFAULT_EMBED_SIZE = 100
-TOP_K = 10
+
+THRESHOLD = 0.30 #this will be used for comparison after cosine similarity function has returned, we will use threashold to decide which chunks can be used for context
+CHUNK_SIZE = 100 # this is character limit of a single chunk, having a larger chunk size on a bigger file help with less number of calls to API improving the run time
+EMBED_MODEL = "text-embedding-3-small" # embedding model being used, embedding will be used to convert the chunks to vectors which will be then be used to compare
+EXTRACT_VERSION = "pypdf-v2"   # this is version history, not mandatory
+DEFAULT_EMBED_SIZE = 100 # this will be used in the embed function to pass the maximum number of chunks at one go the embed mode
+TOP_K = 10 # maximum context length sent to the LLM model for final response, these are top matched with the question as shown below
 MAX_FILE = 10 # maximum file size
 MAX_PAGES = 100 # maximum number of pages in the document
 
-load_dotenv() 
+load_dotenv() # this will be used to load the .env file which contains the API key
 
-_client = None
+_client = None # creating a temporary client variable
+'''
+whenever we would need to get the api key which will happen during the embedding model call and LLM model call, we will use the get_client() function
+'''
 def get_client():
-    global _client
-    if _client is not None:
+    global _client 
+    if _client is not None:  # this will check if the client is none i.e if the client does not have a key instance
         return _client
 
-    key = os.environ.get('OPENAI_API_KEY')
+    key = os.environ.get('OPENAI_API_KEY') #calling the key stored in then .env file
     if not key:
         try:
-            key = st.secrets['OPENAI_API_KEY']
-        except(KeyError,StreamlitSecretNotFoundError):
+            key = st.secrets['OPENAI_API_KEY'] # if the key does not exist in the .env file which will happen in the case of streamlit file, bevause 
+            # .env is not sent to GitHub hence, streamlit never sees it so we need a way to call the secrets area of streamlit where the key is also stored
+        except(KeyError,StreamlitSecretNotFoundError): # if the key is not found anywhere then ofcourse here is the error
             key = None
     if not key:
-        raise DocumentError('OPENAI API KEY NOT FOUND')
-    _client = OpenAI(api_key=key)
-    return _client
+        raise DocumentError('OPENAI API KEY NOT FOUND') # if the key is nowhere then raise the documnent error 
+    _client = OpenAI(api_key=key) # the key gets assigned to the client temp variable
+    return _client #client variabnle with the key is then returned
+
+
+'''
+the role of read_bytes() function is to read the file as bytes using "rb" and then just return the content of the file which will be bytes
+# if file is not found then raise an error
+
+'''
 
 def read_bytes(path):
     try: 
@@ -69,16 +70,46 @@ def read_bytes(path):
     except FileNotFoundError:
         raise DocumentError(f"{path} not found, check the file or  path")
 
-class DocumentError(Exception):
+'''
+Error class - Document Error, this will be called whenever there is an error and since this is the child class of Exception it will be able handle all of the exception
+all we need to raise the Document Error where there is a potential issue and it will be handeled in one place
+'''
+
+class DocumentError(Exception): 
     pass
 
+
+'''
+hasfingerprint() : this is one of the most critical function as this will be used to generate a unique finger print for the file, which will tell us the folliwing
+
+1. whethwer the file has been modified-  if the fingerprint changed then it means yes
+2. whether the file already is in use - this is important to avoid multiple chunking and embedding, saving loads of time
+
+how does the hashfingerprint work?
+
+1. it takes file_hash as the first input which is basically hashed version of the entire data in the file coming from the hash_bytes() func
+2. then it will called the hashlib library which is used for hashing in python
+3. then sha256 will be selected as the hashing protocol
+4. file_hash, chunksize, embedmodel and extract version are then combined in a string - this will help generate the unique fingerprint
+5. then .encode function is called which will convert the string to bytes
+6. bytes are passed to  hexdigest which will convert the bytes to hexadecimal giving the final hashcode as fingerprint
+'''
 def hashfingerprint(file_hash):
-    fingerprint = hashlib.sha256(f"{file_hash}|{CHUNK_SIZE}|{EMBED_MODEL}|{EXTRACT_VERSION}".encode()).hexdigest()
+    fingerprint = hashlib.sha256(f"{file_hash}|{CHUNK_SIZE}|{EMBED_MODEL}|{EXTRACT_VERSION}".encode()).hexdigest() 
     return fingerprint
 
-
+'''
+hash_bytes() is used to generate data hash it also uses the hashlib.sha256 but does not use encode because the data is already in bytes
+'''
 def hash_bytes(data):
     return hashlib.sha256(data).hexdigest()
+
+
+'''
+read_file() function will be called when the file type is txt 
+it will get the data which will be in bytes and has to decode the text into string for it to be read by the chunks function
+if there is an issue with the bytes being passed to the function the it will raise a Document  Error as the content become unreadable
+'''
 
 def read_file(data):
     try:
@@ -87,6 +118,19 @@ def read_file(data):
         raise DocumentError("this file is not readable as UTF-8 text")
 
 
+
+'''
+read_pdf() will be called when the file type is pdf
+it will take bytes as input and follow the following approach:
+
+1. it will first generate a data streamm using the io.BytesIO which will be passed to pdfReader and the final version is then passed to a reader instance
+BytesIO gets the bbytes and covert it into file like instance which is then passed to pdfReader which extracts the content and send to reader
+
+2. reader then checks if the pages in the file are under the limit, if they are then the text is extracted and stored in a list (page_content)
+3. the entire data from the list is then combined in full_text
+4. then we perform a check to see if the file was not empty or only had blankspaces, if the file was empty then an error is raised
+5. if the file was not empty then the entire text is returned
+'''
 def read_pdf(PdfBytes):
     try:
         stream =  io.BytesIO(PdfBytes)
@@ -95,7 +139,7 @@ def read_pdf(PdfBytes):
 
         if len(reader.pages) <= MAX_PAGES:
             for page in reader.pages:
-                extracted = page.extract_text() or ""
+                extracted = page.extract_text() or "" # this will decode the bytes to actual text or store "" if the page is blank
                 page_content.append(extracted)
         else:
             raise DocumentError(f"The document contains {len(reader.pages)}pages, while the limit is {MAX_PAGES} pages")
@@ -110,9 +154,15 @@ def read_pdf(PdfBytes):
 
     return full_text
 
-def chunk_text(text, size):
-    """Split text into chunks of `size` words."""
+'''
+chunk_text is used to split the text which it recives either from read_pdf() or read_file() and then splits it into chunks as list and then return that list
+1. size would mostly be the DEFAULT_CHUNK_SIZE called above 
+2. the text is split into a list and then through slicing the chunks are created from the list
+3. a check is needed to ensure the chunks are not empty
 
+'''
+
+def chunk_text(text, size):
     if size <= 0:
         raise ValueError("Chunk size must be greater than zero")
 
@@ -129,15 +179,26 @@ def chunk_text(text, size):
     return chunks
 
 
+'''
+Emebedding is used to take the chunks rom chunk_text -> pass it to a open Ai embedding model - > get the vectors -> return those vectors
 
+As we have alot of chunks in the list we cannot pass all of them at one as every model has a token input limit, hence, we use DEFAULT_EMBED_SIZE
+the role of this to divide the chunks list into further chunks through slicing in order to avoid model overloading
+
+then each new embeded chunk is passed over to the model through the following process
+
+response.get_client(this is will get the api key).embeddings.creat() - this will pass the EMBED MODEL we want to use, input chunk and the return type "float"
+that we will require
+
+the response from the model is added in a list 
+
+as response will have a lot of data we will only take response.data.embedding as the final ouput as this will include the vectors we need
+
+list of all the vectors is then returned
+
+
+'''
 def embed(text):
-    """Turn a LIST of strings into a list of vectors (1536 numbers each).
-
-    One API call handles the whole list, and the vectors come back in the same order.
-    The print is a debug line: it shows how many texts were sent (i.e. how much we pay for).
-    """
-
-    
     print(f"embedding {len(text)} text(s)")
     embedding_vector = []
     j = int(math.ceil(len(text)/DEFAULT_EMBED_SIZE))
@@ -156,6 +217,16 @@ def embed(text):
     
     print(f"Embedding vector length : {len(embedding_vector)}")
     return embedding_vector
+
+'''
+answer_question() wille bs used to take in the question and context which will be the selected chunks having the highest similarty with the question
+
+All of those chunks will be passed on to the LLM model which will be assigned a role and will be asked to use the context to answer the question
+the model is further stopped from using an external knowledge
+response from the model is then return which will be printed
+
+so either a answer to the question or a confirmation that the answer to the question does not exist inside the model
+'''
 
 
 
@@ -204,17 +275,37 @@ def answer_question(question, context):
 
     return response.choices[0].message.content
 
+'''
+cosine_similarity() uses a mathematical function which takes in 2 vectors 
+
+1. the question vector 
+2. the vector of the chunks from the document
+
+each question and combination will have a similarity which is then used to find the best matching chunk with the question
 
 
-def cosine_similarity(a, b):
-    """Similarity of two vectors: 1 = same direction, 0 = unrelated, -1 = opposite.
+returns a response which is 1, 0, -1 
+Similarity of two vectors: 1 = same direction, 0 = unrelated, -1 = opposite.
 
+here is how it works : 
     Dot product divided by the two lengths. Dividing by length means only direction
     matters, so a short chunk and a long chunk on the same topic still score high.
-    """
+
+'''
+
+def cosine_similarity(a, b):
     a = np.array(a)
     b = np.array(b)
     return (np.dot(a, b)) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+'''
+save_index is basic function which just does 2 things
+
+1. create a dict which stores the fingerprint, chunks and vector
+2. takes the path generated in the main()n and dumps the dict in the json format to that path
+3., this function will only called when either the path does not exists or fingerint is not a match
+'''
 
 
 def save_index(chunks, vectors, path, contentHash):
@@ -231,6 +322,10 @@ def save_index(chunks, vectors, path, contentHash):
         json.dump(data, file)
 
 
+'''
+load_index() will be called when we already have a file in cache stored as JSON, and the only role this play is returning the content stored
+'''
+
 def load_index(path):
     """Read a saved index. Returns (chunks, vectors, saved_hash).
 
@@ -242,11 +337,18 @@ def load_index(path):
 
     return data["Chunks"], data["vectors"], data["hashCode"]
 
+'''
+extract_text() takes in the byte data and the file name 
+it will check whether the filename is pdf or txt and the will call the correct function to get the content and return the data
+'''
+
 def extract_text(data, filename):
     if os.path.splitext(filename)[1].lower() == ".pdf":
         return read_pdf(data)
     else:
         return read_file(data)
+
+
 
 def build_index(data, filename, cache_path = None):
     file_hash = hash_bytes(data)
@@ -300,18 +402,46 @@ def answer(question, chunks, vectors):
 
 if __name__ == "__main__":
     # --- 1. Command-line input: the file to search and the question to ask ---
-    start_time = time.perf_counter()
-    parser = argparse.ArgumentParser(description="Calling the parser for declaration")
-    parser.add_argument("filename", help="enter the name of the file")
-    parser.add_argument("question", help="Enter the question you would like the system to answer")
-    args = parser.parse_args()
+    start_time = time.perf_counter() 
+    parser = argparse.ArgumentParser(description="Calling the parser for declaration") # generating a argument parser, this will be used to get input from CLI
+    parser.add_argument("filename", help="enter the name of the file") # used to call the file name, if the filname is not provided then help= will be printed
+    parser.add_argument("question", help="Enter the question you would like the system to answer") # used to get the queastion
+    args = parser.parse_args() # generating parser instance and passing it to args variable
 
     try:
-        byteData = read_bytes(args.filename)
+        byteData = read_bytes(args.filename) 
+        '''
+        the first call is to the read_bytes function with the filename, because during streamlit the data sent will not be a file rather it will be stream
+        of bytes hence, we cannot handel it normally and have to send it as bytes
+
+        this functio is mainly used when we working with CLI because we need to use this function to read the file as byte while in streamlit this will be default
+        '''
         file_path = f"{os.path.basename(args.filename)}_indexes.json"
+        # generating filepath is very imoortant because this will store the cache file for us so that we dont have to load te file everytimg a question is asked
+        # this will save the runtime of the code and memory
+        
 
+        '''
+        Role of the build_index is to take in data, filename and the path
 
+        Generate Finger print which will be act as unique identity for the cache
+
+        1. check if the path exist(by matching the fingerprint), if yes, return the data
+        2. if the path does not exist then open the file to read its content
+        3. generate chunks
+        4. send those chunks over to the embed code
+        5. return chunks, vectors and fingerprint
+        '''
         result_file, vector_file, fingerprint = build_index(byteData, args.filename, file_path)
+
+        '''
+        answer() is used to generating the final response, it will take input the output from the build_iondex function and then do the following:
+        1. retreive the top 10 chunks by checkign the threshold
+        2, then run the LLM model and pass those top 10 chunks alongside the question
+        3. return the answer 
+
+        '''
+
         result  = answer(args.question, result_file, vector_file)
         print(result["answer"])
 
